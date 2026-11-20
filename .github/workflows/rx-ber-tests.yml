@@ -1,0 +1,32 @@
+name: RX BER tests
+
+on:
+  push:
+    paths:
+      - 'host-ui-rx/bridge/bridge.py'
+      - 'host-ui-rx/web/app/app.js'
+      - 'host-ui-rx/tests/**'
+      - '.github/workflows/rx-ber-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-rx-ber:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install RX test dependencies
+        run: python -m pip install aiohttp websockets
+      - name: Run BER unit tests
+        run: python -m unittest discover -s host-ui-rx/tests -v
+      - name: Check Python syntax
+        run: python -m py_compile host-ui-rx/bridge/bridge.py host-ui-rx/tests/test_ber.py
+      - name: Check JavaScript syntax
+        run: node --check host-ui-rx/web/app/app.js
