@@ -293,10 +293,14 @@
       form.append('reference', refFile, refFile.name);
       form.append('filename', filename);
       showToast('Computing BER...');
+      berBtn.disabled = true;
+      berBtn.textContent = 'Computing...';
       try {
         const resp = await fetch('/api/compute_ber', { method: 'POST', body: form });
         if (!resp.ok) {
-          showToast('BER computation failed: ' + resp.statusText);
+          // Show the actual reason (e.g. different file sizes) instead of a generic HTTP error.
+          const errorMessage = (await resp.text()).trim();
+          showToast(errorMessage || `BER computation failed (HTTP ${resp.status}).`);
           return;
         }
         const res = await resp.json();
@@ -310,6 +314,8 @@
         console.error(e);
         showToast('BER request failed');
       } finally {
+        berBtn.disabled = false;
+        berBtn.textContent = 'Compute BER';
         // cleanup
         document.body.removeChild(input);
       }
