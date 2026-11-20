@@ -22,6 +22,51 @@ from websockets import serve
 
 LOG = logging.getLogger("rx-bridge")
 
+
+def compare_files(received_path, reference_path, chunk_size=64 * 1024):
+    """Count aligned bit errors between equally sized, nonempty files.
+
+    BER is not meaningful when byte positions are unaligned. In particular,
+    padding missing bytes with zero can incorrectly report zero errors if a
+    file ends with zero bytes, so reject different lengths instead.
+    """
+    received_size = os.path.getsize(received_path)
+    reference_size = os.path.getsize(reference_path)
+    if received_size != reference_size:
+        raise ValueError(
+            f"File size mismatch: received {received_size} bytes, "
+            f"reference {reference_size} bytes. "
+            "BER requires files of equal length and aligned data."
+        )
+    if received_size == 0:
+        raise ValueError('Cannot calculate BER for empty files.')
+
+    differing_bytes = 0
+    differing_bits = 0
+    with open(received_path, 'rb') as received, open(reference_path, 'rb') as reference:
+        while True:
+            a = received.read(chunk_size)
+            if not a:
+                break
+            b = reference.read(len(a))
+            for av, bv in zip(a, b):
+                difference = av ^ bv
+                if difference:
+                    differing_bytes += 1
+                    try:
+                        differing_bits += difference.bit_count()
+                    except AttributeError:  # Python 3.7 compatibility
+                        differing_bits += bin(difference).count('1')
+
+    bits_compared = received_size * 8
+    return {
+        'bytes_compared': received_size,
+        'differing_bytes': differing_bytes,
+        'bits_compared': bits_compared,
+        'differing_bits': differing_bits,
+        'bit_error_rate': differing_bits / bits_compared
+    }
+
 class BridgeState:
     """Holds the global state for the UI bridge."""
     def __init__(self):
@@ -413,48 +458,15 @@ async def start_web_server(host, port, state: BridgeState):
             finally:
                 tmp.close()
 
-            def compare_files(received_path, reference_path, chunk_size=64 * 1024):
-                differing_bytes = 0
-                differing_bits = 0
-                bytes_compared = 0
-
-                with open(received_path, 'rb') as fa, open(reference_path, 'rb') as fb:
-                    while True:
-                        a = fa.read(chunk_size)
-                        b = fb.read(chunk_size)
-                        if not a and not b:
-                            break
-                        la, lb = len(a), len(b)
-                        max_len = max(la, lb)
-                        for i in range(max_len):
-                            av = a[i] if i < la else 0
-                            bv = b[i] if i < lb else 0
-                            x = av ^ bv
-                            if x:
-                                differing_bytes += 1
-                                try:
-                                    differing_bits += x.bit_count()
-                                except AttributeError:
-                                    differing_bits += bin(x).count('1')
-                        bytes_compared += max_len
-
-                bits_compared = bytes_compared * 8
-                bit_error_rate = (differing_bits / bits_compared) if bits_compared > 0 else 0.0
-                return {
-                    'bytes_compared': bytes_compared,
-                    'differing_bytes': differing_bytes,
-                    'bits_compared': bits_compared,
-                    'differing_bits': differing_bits,
-                    'bit_error_rate': bit_error_rate
-                }
-
             loop = asyncio.get_running_loop()
             try:
                 stats = await loop.run_in_executor(None, compare_files, str(filepath), tmp_path)
+            except ValueError as exc:
+                raise web.HTTPUnprocessableEntity(text=str(exc))
             finally:
                 try:
                     os.remove(tmp_path)
-                except Exception:
+                except OSError:
                     pass
 
             result = {
